@@ -139,7 +139,6 @@ impl<'a> Parser<'a> {
 
 #[inline(always)]
 fn should_use_inline(byml: &Byml, max_inline_items: usize) -> bool {
-    return false;
     let is_simple = |by: &Byml| !matches!(by, Byml::Array(_) | Byml::Map(_));
     match byml {
         Byml::Array(arr) => arr.len() < max_inline_items && arr.iter().all(is_simple),
