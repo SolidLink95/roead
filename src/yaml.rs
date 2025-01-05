@@ -89,11 +89,10 @@ pub(crate) fn write_float(
     value: f64,
     float_prec: Option<usize>,
 ) -> Result<parking_lot::MappedRwLockReadGuard<'static, str>> {
-    use lexical_core::{FormattedSize, ToLexical, WriteFloatOptions};
+    use lexical_core::{FormattedSize, ToLexical, WriteFloatOptions, ToLexicalWithOptions};
+    use core::num::NonZeroUsize;
     static BUF: LazyLock<parking_lot::RwLock<[u8; f64::FORMATTED_SIZE_DECIMAL + 1]>> =
         LazyLock::new(|| parking_lot::RwLock::new([0; f64::FORMATTED_SIZE_DECIMAL + 1]));
-
-    // Create formatting options with the specified precision
 
     let mut buffer = BUF.write();
     let extra;
@@ -107,13 +106,14 @@ pub(crate) fn write_float(
     };
 
     if let Some(fl_prec) = float_prec {
-        let float_prec = fl_prec.max(1).min(10);
+        let float_prec = fl_prec.max(1).min(10); // Ensure precision is between 1 and 10
+        let precision_option = NonZeroUsize::new(float_prec);
         if let Ok(options) = WriteFloatOptions::builder()
-            .max_significant_digits(float_prec)
+            .max_significant_digits(precision_option)
             .build()
         {
             unsafe {
-                let len = value.to_lexical_with_options_unchecked(buf, &options).len() + extra;
+                let len = value.to_lexical_with_options(buf, &options).len() + extra;
                 return Ok(parking_lot::RwLockReadGuard::map(
                     parking_lot::RwLockWriteGuard::downgrade(buffer),
                     |buf| core::str::from_utf8_unchecked(&buf[..len]),

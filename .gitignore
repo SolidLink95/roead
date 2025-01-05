@@ -41,3 +41,5 @@ docs/doxygen/*
 /Cargo.lock
 
 tmp.txt
+
+/src/main.rs
