@@ -14,7 +14,12 @@ impl Byml {
     /// or Hash nodes.
     pub fn to_text(&self) -> std::string::String {
         Emitter::new(self)
-            .emit()
+            .emit(10, None)
+            .expect("BYML must be container or null to serialize")
+    }
+    pub fn to_text_advanced(&self, max_inline_items: usize, float_prec: Option<usize>) -> std::string::String {
+        Emitter::new(self)
+            .emit(max_inline_items, float_prec)
             .expect("BYML must be container or null to serialize")
     }
 }
@@ -133,12 +138,12 @@ impl<'a> Parser<'a> {
 }
 
 #[inline(always)]
-fn should_use_inline(byml: &Byml) -> bool {
+fn should_use_inline(byml: &Byml, max_inline_items: usize) -> bool {
     return false;
     let is_simple = |by: &Byml| !matches!(by, Byml::Array(_) | Byml::Map(_));
     match byml {
-        Byml::Array(arr) => arr.len() < 10 && arr.iter().all(is_simple),
-        Byml::Map(hash) => hash.len() < 10 && hash.iter().all(|(_, v)| is_simple(v)),
+        Byml::Array(arr) => arr.len() < max_inline_items && arr.iter().all(is_simple),
+        Byml::Map(hash) => hash.len() < max_inline_items && hash.iter().all(|(_, v)| is_simple(v)),
         _ => false,
     }
 }
@@ -155,21 +160,23 @@ impl<'a, 'b> Emitter<'a, 'b> {
     fn build_node<'e>(
         byml: &Byml,
         mut dest_node: NodeRef<'b, 'e, '_, &'e mut Tree<'b>>,
+        max_inline_items: usize,
+        float_prec: Option<usize>
     ) -> Result<()> {
         match byml {
             Byml::Array(array) => {
-                if should_use_inline(byml) {
+                if should_use_inline(byml, max_inline_items) {
                     dest_node.change_type(ryml::NodeType::Seq | ryml::NodeType::WipStyleFlowSl)?;
                 } else {
                     dest_node.change_type(ryml::NodeType::Seq)?;
                 }
                 for item in array {
                     let node = dest_node.append_child()?;
-                    Self::build_node(item, node)?;
+                    Self::build_node(item, node, max_inline_items, float_prec)?;
                 }
             }
             Byml::Map(hash) => {
-                if should_use_inline(byml) {
+                if should_use_inline(byml, max_inline_items) {
                     dest_node.change_type(ryml::NodeType::Map | ryml::NodeType::WipStyleFlowSl)?;
                 } else {
                     dest_node.change_type(ryml::NodeType::Map)?;
@@ -183,11 +190,11 @@ impl<'a, 'b> Emitter<'a, 'b> {
                         let flags = node.node_type()?;
                         node.set_type_flags(flags | ryml::NodeType::WipKeySquo)?;
                     }
-                    Self::build_node(value, node)?;
+                    Self::build_node(value, node, max_inline_items, float_prec)?;
                 }
             }
             Byml::HashMap(hash) => {
-                if should_use_inline(byml) {
+                if should_use_inline(byml, max_inline_items) {
                     dest_node.change_type(ryml::NodeType::Map | ryml::NodeType::WipStyleFlowSl)?;
                 } else {
                     dest_node.change_type(ryml::NodeType::Map)?;
@@ -197,12 +204,12 @@ impl<'a, 'b> Emitter<'a, 'b> {
                 for (key, value) in map_items {
                     let mut node = dest_node.append_child()?;
                     node.set_key(&key.to_string())?;
-                    Self::build_node(value, node)?;
+                    Self::build_node(value, node, max_inline_items, float_prec)?;
                 }
                 dest_node.set_val_tag("!h")?;
             }
             Byml::ValueHashMap(hash) => {
-                if should_use_inline(byml) {
+                if should_use_inline(byml, max_inline_items) {
                     dest_node.change_type(ryml::NodeType::Map | ryml::NodeType::WipStyleFlowSl)?;
                 } else {
                     dest_node.change_type(ryml::NodeType::Map)?;
@@ -212,7 +219,7 @@ impl<'a, 'b> Emitter<'a, 'b> {
                 for (key, (value, _)) in map_items {
                     let mut node = dest_node.append_child()?;
                     node.set_key(&key.to_string())?;
-                    Self::build_node(value, node)?;
+                    Self::build_node(value, node, max_inline_items, float_prec)?;
                 }
                 dest_node.set_val_tag("!vh")?;
             }
@@ -226,9 +233,9 @@ impl<'a, 'b> Emitter<'a, 'b> {
                         }
                     }
                     Byml::Bool(b) => dest_node.set_val(if *b { "true" } else { "false" })?,
-                    Byml::Float(f) => dest_node.set_val(&write_float(*f as f64)?)?,
+                    Byml::Float(f) => dest_node.set_val(&write_float(*f as f64, float_prec)?)?,
                     Byml::Double(d) => {
-                        dest_node.set_val(&write_float(*d)?)?;
+                        dest_node.set_val(&write_float(*d, float_prec)?)?;
                         dest_node.set_val_tag("!f64")?;
                     }
                     Byml::I32(i) => dest_node.set_val(&lexical::to_string(*i))?,
@@ -266,7 +273,7 @@ impl<'a, 'b> Emitter<'a, 'b> {
         Ok(())
     }
 
-    fn emit(self) -> Result<std::string::String> {
+    fn emit(self, max_inline_items: usize, float_prec: Option<usize>) -> Result<std::string::String> {
         let Self(byml, mut tree) = self;
         match byml {
             Byml::Map(_) | Byml::HashMap(_) | Byml::ValueHashMap(_) => tree.to_map(0)?,
@@ -278,7 +285,7 @@ impl<'a, 'b> Emitter<'a, 'b> {
                 ));
             }
         };
-        Self::build_node(byml, tree.root_ref_mut()?)?;
+        Self::build_node(byml, tree.root_ref_mut()?, max_inline_items, float_prec)?;
         Ok(tree.emit()?)
     }
 }
