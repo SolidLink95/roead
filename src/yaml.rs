@@ -89,7 +89,7 @@ pub(crate) fn write_float(
     value: f64,
     float_prec: Option<usize>,
 ) -> Result<parking_lot::MappedRwLockReadGuard<'static, str>> {
-    use lexical_core::{FormattedSize, ToLexical, WriteFloatOptions, ToLexicalWithOptions};
+    use lexical_core::{FormattedSize, NumberFormat, ToLexical, ToLexicalWithOptions, WriteFloatOptions};
     use core::num::NonZeroUsize;
     static BUF: LazyLock<parking_lot::RwLock<[u8; f64::FORMATTED_SIZE_DECIMAL + 1]>> =
         LazyLock::new(|| parking_lot::RwLock::new([0; f64::FORMATTED_SIZE_DECIMAL + 1]));
@@ -113,7 +113,7 @@ pub(crate) fn write_float(
             .build()
         {
             unsafe {
-                let len = value.to_lexical_with_options(buf, &options).len() + extra;
+                let len = value.to_lexical_with_options::<{ NumberFormat::STANDARD }>(buf, &options).len() + extra;
                 return Ok(parking_lot::RwLockReadGuard::map(
                     parking_lot::RwLockWriteGuard::downgrade(buffer),
                     |buf| core::str::from_utf8_unchecked(&buf[..len]),
@@ -130,6 +130,8 @@ pub(crate) fn write_float(
         ))
     }
 }
+
+
 
 /// Deliberately not compliant to the YAML 1.2 standard to get rid of unused
 /// features that harm performance.
