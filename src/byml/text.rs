@@ -233,9 +233,19 @@ impl<'a, 'b> Emitter<'a, 'b> {
                         }
                     }
                     Byml::Bool(b) => dest_node.set_val(if *b { "true" } else { "false" })?,
-                    Byml::Float(f) => dest_node.set_val(&write_float(*f as f64, float_prec)?)?,
+                    Byml::Float(f) => {
+                        if let Some(_) = float_prec {
+                            dest_node.set_val(&lexical::to_string(*i))?
+                        } else {
+                            dest_node.set_val(&write_float(*f as f64)?)?;
+                        }
+                    }
                     Byml::Double(d) => {
-                        dest_node.set_val(&write_float(*d, float_prec)?)?;
+                        if let Some(_) = float_prec {
+                            dest_node.set_val(&lexical::to_string(*i))?
+                        } else {
+                            dest_node.set_val(&write_float(*d)?)?;
+                        }
                         dest_node.set_val_tag("!f64")?;
                     }
                     Byml::I32(i) => dest_node.set_val(&lexical::to_string(*i))?,
