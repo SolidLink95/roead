@@ -89,12 +89,8 @@ pub(crate) fn write_float(
     value: f64,
     float_prec: Option<usize>,
 ) -> Result<parking_lot::MappedRwLockReadGuard<'static, str>> {
-    use lexical_core::{FormattedSize, ToLexical, ToLexicalWithOptions, WriteFloatOptions, number_format::NumberFormatBuilder};
+    use lexical_core::{FormattedSize, ToLexical, ToLexicalWithOptions, WriteFloatOptions};
     use core::num::NonZeroUsize;
-
-    // Define the standard format as a compile-time constant
-    const STANDARD: u128 = NumberFormatBuilder::decimal().build();
-
     static BUF: LazyLock<parking_lot::RwLock<[u8; f64::FORMATTED_SIZE_DECIMAL + 1]>> =
         LazyLock::new(|| parking_lot::RwLock::new([0; f64::FORMATTED_SIZE_DECIMAL + 1]));
 
@@ -117,7 +113,7 @@ pub(crate) fn write_float(
             .build()
         {
             unsafe {
-                let len = value.to_lexical_with_options::<{ STANDARD }>(buf, &options).len() + extra;
+                let len = value.to_lexical_with_options(buf, &options).len() + extra;
                 return Ok(parking_lot::RwLockReadGuard::map(
                     parking_lot::RwLockWriteGuard::downgrade(buffer),
                     |buf| core::str::from_utf8_unchecked(&buf[..len]),
@@ -134,6 +130,7 @@ pub(crate) fn write_float(
         ))
     }
 }
+
 
 
 
