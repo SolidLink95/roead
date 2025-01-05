@@ -235,14 +235,14 @@ impl<'a, 'b> Emitter<'a, 'b> {
                     Byml::Bool(b) => dest_node.set_val(if *b { "true" } else { "false" })?,
                     Byml::Float(f) => {
                         if let Some(_) = float_prec {
-                            dest_node.set_val(&lexical::to_string(*i))?
+                            dest_node.set_val(&lexical::to_string(*f))?
                         } else {
                             dest_node.set_val(&write_float(*f as f64)?)?;
                         }
                     }
                     Byml::Double(d) => {
                         if let Some(_) = float_prec {
-                            dest_node.set_val(&lexical::to_string(*i))?
+                            dest_node.set_val(&lexical::to_string(*d))?
                         } else {
                             dest_node.set_val(&write_float(*d)?)?;
                         }
