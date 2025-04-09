@@ -154045,3 +154045,4 @@ zyx
 Ｙ軸回転のみ有効
 Ｙ軸回転のみ有効
 cloth_mesh_list
+collidable_list
