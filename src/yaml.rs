@@ -100,7 +100,8 @@ pub(crate) fn write_float(value: f64) -> Result<parking_lot::MappedRwLockReadGua
         &mut buffer[..f64::FORMATTED_SIZE_DECIMAL]
     };
     unsafe {
-        let len = value.to_lexical_unchecked(buf).len() + extra;
+        // let len = value.to_lexical_unchecked(buf).len() + extra;
+        let len = value.to_lexical(buf).len() + extra;
         Ok(parking_lot::RwLockReadGuard::map(
             parking_lot::RwLockWriteGuard::downgrade(buffer),
             |buf| core::str::from_utf8_unchecked(&buf[..len]),
