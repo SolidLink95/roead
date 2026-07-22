@@ -80,60 +80,30 @@ impl ExactSizeIterator for ChildFormatIterator<'_, '_> {
     }
 }
 
-fn format_numbered_name(name: &str, pos: usize, buf: &mut StringBuffer) {
+fn format_numbered_name(name: &str, pos: usize, buf: &mut StringBuffer) -> bool {
     buf.clear();
 
-    if name.contains("%d") {
-        let mut split = name.split("%d");
-        let prefix = unsafe { split.next().unwrap_unchecked() };
-        buf.insert_str(0, prefix);
-        write!(buf, "{}", pos).expect("Format failure");
-        if let Some(suffix) = split.next() {
-            buf.push_str(suffix);
-        }
-    } else if name.contains("%02d") {
-        let mut split = name.split("%02d");
-        let prefix = unsafe { split.next().unwrap_unchecked() };
-        buf.insert_str(0, prefix);
-        write!(buf, "{:02}", pos).expect("Format failure");
-        if let Some(suffix) = split.next() {
-            buf.push_str(suffix);
-        }
-    } else if name.contains("%03d") {
-        let mut split = name.split("%03d");
-        let prefix = unsafe { split.next().unwrap_unchecked() };
-        buf.insert_str(0, prefix);
-        write!(buf, "{:03}", pos).expect("Format failure");
-        if let Some(suffix) = split.next() {
-            buf.push_str(suffix);
-        }
-    } else if name.contains("%04d") {
-        let mut split = name.split("%04d");
-        let prefix = unsafe { split.next().unwrap_unchecked() };
-        buf.insert_str(0, prefix);
-        write!(buf, "{:04}", pos).expect("Format failure");
-        if let Some(suffix) = split.next() {
-            buf.push_str(suffix);
-        }
-    } else if name.contains("%u") {
-        let mut split = name.split("%u");
-        let prefix = unsafe { split.next().unwrap_unchecked() };
-        buf.insert_str(0, prefix);
-        write!(buf, "{}", pos).expect("Format failure");
-        if let Some(suffix) = split.next() {
-            buf.push_str(suffix);
-        }
-    } else if name.contains("%02u") {
-        let mut split = name.split("%02u");
-        let prefix = unsafe { split.next().unwrap_unchecked() };
-        buf.insert_str(0, prefix);
-        write!(buf, "{:02}", pos).expect("Format failure");
-        if let Some(suffix) = split.next() {
-            buf.push_str(suffix);
-        }
-    } else {
-        unsafe { core::hint::unreachable_unchecked() }
-    }
+    let formats = [
+        ("%02d", format!("{pos:02}")),
+        ("%03d", format!("{pos:03}")),
+        ("%04d", format!("{pos:04}")),
+        ("%02u", format!("{pos:02}")),
+        ("%d", pos.to_string()),
+        ("%u", pos.to_string()),
+    ];
+    let Some((placeholder, replacement)) = formats
+        .iter()
+        .find(|(placeholder, _)| name.contains(placeholder))
+    else {
+        return false;
+    };
+    let Some((prefix, suffix)) = name.split_once(placeholder) else {
+        return false;
+    };
+    buf.push_str(prefix);
+    buf.push_str(replacement);
+    buf.push_str(suffix);
+    true
 }
 
 macro_rules! free_cow {
@@ -260,7 +230,9 @@ impl<'a> NameTable<'a> {
                 // Last resort: test all numbered names.
                 for format in NUMBERED_NAMES.lines() {
                     for i in 0..(index + 2) {
-                        format_numbered_name(format, i, &mut guess_buffer);
+                        if !format_numbered_name(format, i, &mut guess_buffer) {
+                            continue;
+                        }
                         if hash_name(&guess_buffer) == hash {
                             let name =
                                 entry.insert_entry(Cow::Owned(guess_buffer.as_str().to_owned()));
