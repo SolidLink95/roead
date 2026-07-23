@@ -68,8 +68,14 @@ class MatchFinder {
 
     const size_t search_begin = pos > mSearchRange ? pos - mSearchRange : 0;
     const size_t compare_end = std::min(mSrc.size(), pos + MaximumMatchLength);
-    auto candidate = std::lower_bound(bucket->second.begin(), bucket->second.end(), search_begin);
-    for (; candidate != bucket->second.end() && *candidate < pos; ++candidate) {
+    const auto begin =
+        std::lower_bound(bucket->second.begin(), bucket->second.end(), search_begin);
+    auto candidate =
+        std::lower_bound(bucket->second.begin(), bucket->second.end(), pos);
+    // EveryFileExplorer searches backwards and therefore keeps the nearest
+    // candidate when multiple matches have the same length.
+    while (candidate != begin) {
+      --candidate;
       size_t source = *candidate + 3;
       size_t current = pos + 3;
       while (current < compare_end && mSrc[source] == mSrc[current]) {
@@ -157,6 +163,11 @@ rust::Vec<u8> Compress(rust::Slice<const u8> src, u32 data_alignment, int level)
     }
     writer.Buffer()[code_offset] = code;
   }
+  // EveryFileExplorer pads the completed Yaz0 stream to a four-byte boundary.
+  // The padding is outside the token stream but is part of Switch-Toolbox's
+  // byte-for-byte output.
+  while (writer.Buffer().size() % 4 != 0)
+    writer.Buffer().push_back(0);
   return writer.Finalize();
 }
 
