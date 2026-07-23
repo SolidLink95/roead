@@ -49,8 +49,8 @@ Header GetHeader(rust::Slice<const u8> data);
 
 /// @param src  Source data
 /// @param data_alignment  Required buffer alignment hint for decompression
-/// @param level  Compression level (6 to 9; 6 is fastest and 9 is slowest)
-rust::Vec<u8> Compress(rust::Slice<const u8> src, u32 data_alignment = 0, int level = 7);
+  /// @param level  Switch-Toolbox/libyaz0 compression level (0 to 9)
+rust::Vec<u8> Compress(rust::Slice<const u8> src, u32 data_alignment = 0, int level = 3);
 
 void Decompress(rust::Slice<const u8> src, rust::Slice<u8> dst);
 void DecompressUnsafe(rust::Slice<const u8> src, rust::Slice<u8> dst);

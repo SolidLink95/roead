@@ -18,10 +18,7 @@
  */
 
 #include <algorithm>
-#include <bitset>
 #include <cstring>
-
-#include <zlib-ng.h>
 
 #include <oead/util/binary_reader.h>
 #include <roead/src/yaz0.rs.h>
@@ -47,60 +44,50 @@ Header GetHeader(rust::Slice<const u8> data) {
 }
 
 namespace {
-class GroupWriter {
-public:
-  GroupWriter(rust::Vec<u8>& result) : m_result{result} { Reset(); }
-
-  void HandleZlibMatch(u32 dist, u32 lc) {
-    if (dist == 0) {
-      // Literal.
-      m_group_header.set(7 - m_pending_chunks);
-      m_result.push_back(u8(lc));
-    } else {
-      // Back reference.
-      constexpr u32 ZlibMinMatch = 3;
-      WriteMatch(dist - 1, lc + ZlibMinMatch);
-    }
-
-    ++m_pending_chunks;
-    if (m_pending_chunks == ChunksPerGroup) {
-      m_result[m_group_header_offset] = u8(m_group_header.to_ulong());
-      Reset();
-    }
-  }
-
-  // Must be called after zlib has completed to ensure the last group is written.
-  void Finalise() {
-    if (m_pending_chunks != 0)
-      m_result[m_group_header_offset] = u8(m_group_header.to_ulong());
-  }
-
-private:
-  void Reset() {
-    m_pending_chunks = 0;
-    m_group_header.reset();
-    m_group_header_offset = m_result.size();
-    m_result.push_back(0xFF);
-  }
-
-  void WriteMatch(u32 distance, u32 length) {
-    if (length < 18) {
-      m_result.push_back(((length - 2) << 4) | u8(distance >> 8));
-      m_result.push_back(u8(distance));
-    } else {
-      // If the match is longer than 18 bytes, 3 bytes are needed to write the match.
-      const size_t actual_length = std::min<size_t>(MaximumMatchLength, length);
-      m_result.push_back(u8(distance >> 8));
-      m_result.push_back(u8(distance));
-      m_result.push_back(u8(actual_length - 0x12));
-    }
-  }
-
-  rust::Vec<u8>& m_result;
-  size_t m_pending_chunks;
-  std::bitset<8> m_group_header;
-  std::size_t m_group_header_offset;
+struct Match {
+  size_t offset = 0;
+  size_t length = 1;
 };
+
+// This deliberately follows the libyaz0 implementation used by
+// Switch-Toolbox. Candidates are visited from oldest to newest, and ties keep
+// the earliest candidate because only a strictly longer match replaces the
+// current result.
+Match FindMatch(rust::Slice<const u8> src, size_t pos, size_t search_range) {
+  Match found;
+  if (pos + 2 >= src.size() || search_range == 0)
+    return found;
+
+  const size_t search_begin = pos > search_range ? pos - search_range : 0;
+  const size_t compare_end = std::min(src.size(), pos + MaximumMatchLength);
+  for (size_t candidate = search_begin; candidate < pos; ++candidate) {
+    if (src[candidate] != src[pos])
+      continue;
+
+    size_t source = candidate + 1;
+    size_t current = pos + 1;
+    while (current < compare_end && src[source] == src[current]) {
+      ++source;
+      ++current;
+    }
+    const size_t length = current - pos;
+    if (length > found.length) {
+      found = {candidate, length};
+      if (length == MaximumMatchLength)
+        break;
+    }
+  }
+  return found;
+}
+
+size_t SearchRangeForLevel(int level) {
+  level = std::clamp(level, 0, 9);
+  if (level == 0)
+    return 0;
+  if (level < 9)
+    return size_t(0x10e0 * level / 9 - 0x0e0);
+  return 0x1000;
+}
 }  // namespace
 
 rust::Vec<u8> Compress(rust::Slice<const u8> src, u32 data_alignment, int level) {
@@ -115,19 +102,34 @@ rust::Vec<u8> Compress(rust::Slice<const u8> src, u32 data_alignment, int level)
   header.reserved.fill(0);
   writer.Write(header);
 
-  GroupWriter group_writer{writer.Buffer()};
+  const size_t search_range = SearchRangeForLevel(level);
+  size_t pos = 0;
+  while (pos < src.size()) {
+    const size_t code_offset = writer.Buffer().size();
+    writer.Buffer().push_back(0);
+    u8 code = 0;
 
-  // Let zlib do the heavy lifting.
-  std::array<u8, 8> dummy{};
-  size_t dummy_size = dummy.size();
-  const int ret = zng_compress2(
-      dummy.data(), &dummy_size, src.data(), src.size(), std::clamp<int>(level, 6, 9),
-      [](void* w, u32 dist, u32 lc) { static_cast<GroupWriter*>(w)->HandleZlibMatch(dist, lc); },
-      &group_writer);
-  if (ret != Z_OK)
-    throw std::runtime_error("zng_compress failed");
-
-  group_writer.Finalise();
+    for (size_t chunk = 0; chunk < ChunksPerGroup && pos < src.size(); ++chunk) {
+      const Match match = FindMatch(src, pos, search_range);
+      if (match.length > 2) {
+        const size_t delta = pos - match.offset - 1;
+        if (match.length < 0x12) {
+          writer.Buffer().push_back(
+              u8((delta >> 8) | ((match.length - 2) << 4)));
+          writer.Buffer().push_back(u8(delta));
+        } else {
+          writer.Buffer().push_back(u8(delta >> 8));
+          writer.Buffer().push_back(u8(delta));
+          writer.Buffer().push_back(u8(match.length - 0x12));
+        }
+        pos += match.length;
+      } else {
+        code |= u8(1 << (7 - chunk));
+        writer.Buffer().push_back(src[pos++]);
+      }
+    }
+    writer.Buffer()[code_offset] = code;
+  }
   return writer.Finalize();
 }
 

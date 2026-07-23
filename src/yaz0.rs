@@ -29,8 +29,8 @@ pub fn get_header(data: impl AsRef<[u8]>) -> Option<Header> {
 /// Decompress Yaz0 data to vector.
 pub fn decompress(data: impl AsRef<[u8]>) -> Result<Vec<u8>> {
     let data = data.as_ref();
-    if data.len() < 0x16 {
-        return Err(Error::InsufficientData(data.len(), 0x16));
+    if data.len() < 0x10 {
+        return Err(Error::InsufficientData(data.len(), 0x10));
     }
     let header = get_header(data).ok_or(Error::InvalidData("Missing or corrupt Yaz0 header"))?;
     if &header.magic != b"Yaz0" {
@@ -48,8 +48,8 @@ pub fn decompress(data: impl AsRef<[u8]>) -> Result<Vec<u8>> {
 /// bytes written.
 pub fn decompress_into(data: impl AsRef<[u8]>, mut buffer: impl AsMut<[u8]>) -> Result<usize> {
     let data = data.as_ref();
-    if data.len() < 0x16 {
-        return Err(Error::InsufficientData(data.len(), 0x16));
+    if data.len() < 0x10 {
+        return Err(Error::InsufficientData(data.len(), 0x10));
     }
     let header = get_header(data).ok_or(Error::InvalidData("Missing or corrupt Yaz0 header"))?;
     if &header.magic != b"Yaz0" {
@@ -88,7 +88,7 @@ pub unsafe fn decompress_unchecked(data: impl AsRef<[u8]>, mut buffer: impl AsMu
 /// decompression fails, or containing the decompressed data otherwise.
 #[inline]
 pub fn decompress_if(data: &[u8]) -> Cow<'_, [u8]> {
-    if data.len() < 0x16 {
+    if data.len() < 0x10 {
         return Cow::Borrowed(data);
     }
     if let Some(header) = get_header(data) {
@@ -106,19 +106,22 @@ pub fn decompress_if(data: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
-/// Compress data with default compression settings (no alignment, compression
-/// level 7).
+/// Compress data with Switch-Toolbox's default compression settings (no
+/// alignment, compression level 3).
 pub fn compress(data: impl AsRef<[u8]>) -> Vec<u8> {
     let data = data.as_ref();
-    ffi::Compress(data, 0, 7)
+    ffi::Compress(data, 0, 3)
 }
 
 /// Yaz0 compression options.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct CompressOptions {
     /// Buffer alignment hint for decompression
-    pub alignment: u8,
-    /// Compression level (6 to 9; 6 is fastest and 9 is slowest)
+    pub alignment: u32,
+    /// Switch-Toolbox/libyaz0 compression level (0 to 9).
+    ///
+    /// Level 0 stores literals only. Levels 1 through 9 progressively expand
+    /// the match-search window, with 9 searching the full Yaz0 window.
     pub compression_level: u8,
 }
 
@@ -126,21 +129,17 @@ impl Default for CompressOptions {
     fn default() -> Self {
         Self {
             alignment: 0,
-            compression_level: 7,
+            compression_level: 3,
         }
     }
 }
 
 /// Compress data with custom compression settings.
 ///
-/// Automatically clamps the compression level to 6 to 9.
+/// Automatically clamps the compression level to 0 to 9.
 pub fn compress_with_options(data: impl AsRef<[u8]>, options: CompressOptions) -> Vec<u8> {
     let data = data.as_ref();
-    ffi::Compress(
-        data,
-        options.alignment as u32,
-        options.compression_level as i32,
-    )
+    ffi::Compress(data, options.alignment, options.compression_level as i32)
 }
 
 /// Compress data conditionally, if an associated path has a Yaz0-associated
@@ -227,5 +226,35 @@ mod tests {
         let mut buffer = vec![0; data.len()];
         let size = unsafe { super::decompress_unchecked(compressed, &mut buffer) };
         assert_eq!(data.as_slice(), &buffer[..size]);
+    }
+
+    #[test]
+    fn switch_toolbox_default_output_and_alignment() {
+        let data = b"abcabcabcabcabcabc";
+        let compressed = super::compress_with_options(
+            data,
+            super::CompressOptions {
+                alignment: 0x1000,
+                compression_level: 3,
+            },
+        );
+        assert_eq!(
+            compressed,
+            [
+                b'Y', b'a', b'z', b'0', 0, 0, 0, 0x12, 0, 0, 0x10, 0, 0, 0, 0, 0, 0xE0, b'a', b'b',
+                b'c', 0xD0, 0x02,
+            ]
+        );
+        assert_eq!(super::decompress(&compressed).unwrap(), data);
+    }
+
+    #[test]
+    fn tiny_switch_toolbox_streams_roundtrip() {
+        for size in 0..=4 {
+            let data: Vec<u8> = (0..size).collect();
+            let compressed = super::compress(&data);
+            assert!(compressed.len() < 0x16);
+            assert_eq!(super::decompress(&compressed).unwrap(), data);
+        }
     }
 }
