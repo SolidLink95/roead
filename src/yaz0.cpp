@@ -19,6 +19,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <unordered_map>
+#include <vector>
 
 #include <oead/util/binary_reader.h>
 #include <roead/src/yaz0.rs.h>
@@ -49,36 +51,60 @@ struct Match {
   size_t length = 1;
 };
 
-// This deliberately follows the libyaz0 implementation used by
-// Switch-Toolbox. Candidates are visited from oldest to newest, and ties keep
-// the earliest candidate because only a strictly longer match replaces the
-// current result.
-Match FindMatch(rust::Slice<const u8> src, size_t pos, size_t search_range) {
-  Match found;
-  if (pos + 2 >= src.size() || search_range == 0)
-    return found;
+class MatchFinder {
+ public:
+  MatchFinder(rust::Slice<const u8> src, size_t search_range)
+      : mSrc(src), mSearchRange(search_range) {}
 
-  const size_t search_begin = pos > search_range ? pos - search_range : 0;
-  const size_t compare_end = std::min(src.size(), pos + MaximumMatchLength);
-  for (size_t candidate = search_begin; candidate < pos; ++candidate) {
-    if (src[candidate] != src[pos])
-      continue;
+  Match Find(size_t pos) {
+    Match found;
+    if (pos + 2 >= mSrc.size() || mSearchRange == 0)
+      return found;
 
-    size_t source = candidate + 1;
-    size_t current = pos + 1;
-    while (current < compare_end && src[source] == src[current]) {
-      ++source;
-      ++current;
+    IndexUntil(pos);
+    const auto bucket = mPositions.find(Key(pos));
+    if (bucket == mPositions.end())
+      return found;
+
+    const size_t search_begin = pos > mSearchRange ? pos - mSearchRange : 0;
+    const size_t compare_end = std::min(mSrc.size(), pos + MaximumMatchLength);
+    auto candidate = std::lower_bound(bucket->second.begin(), bucket->second.end(), search_begin);
+    for (; candidate != bucket->second.end() && *candidate < pos; ++candidate) {
+      size_t source = *candidate + 3;
+      size_t current = pos + 3;
+      while (current < compare_end && mSrc[source] == mSrc[current]) {
+        ++source;
+        ++current;
+      }
+      const size_t length = current - pos;
+      if (length > found.length) {
+        found = {*candidate, length};
+        if (length == MaximumMatchLength)
+          break;
+      }
     }
-    const size_t length = current - pos;
-    if (length > found.length) {
-      found = {candidate, length};
-      if (length == MaximumMatchLength)
-        break;
+    return found;
+  }
+
+ private:
+  uint32_t Key(size_t pos) const {
+    return (uint32_t(mSrc[pos]) << 16) | (uint32_t(mSrc[pos + 1]) << 8) |
+           uint32_t(mSrc[pos + 2]);
+  }
+
+  void IndexUntil(size_t end) {
+    while (mIndexedUntil < end) {
+      if (mIndexedUntil + 2 < mSrc.size())
+        mPositions[Key(mIndexedUntil)].push_back(mIndexedUntil);
+      ++mIndexedUntil;
     }
   }
-  return found;
-}
+
+  rust::Slice<const u8> mSrc;
+  size_t mSearchRange;
+  size_t mIndexedUntil = 0;
+  std::unordered_map<uint32_t, std::vector<size_t>> mPositions;
+};
 
 size_t SearchRangeForLevel(int level) {
   level = std::clamp(level, 0, 9);
@@ -103,6 +129,7 @@ rust::Vec<u8> Compress(rust::Slice<const u8> src, u32 data_alignment, int level)
   writer.Write(header);
 
   const size_t search_range = SearchRangeForLevel(level);
+  MatchFinder match_finder{src, search_range};
   size_t pos = 0;
   while (pos < src.size()) {
     const size_t code_offset = writer.Buffer().size();
@@ -110,7 +137,7 @@ rust::Vec<u8> Compress(rust::Slice<const u8> src, u32 data_alignment, int level)
     u8 code = 0;
 
     for (size_t chunk = 0; chunk < ChunksPerGroup && pos < src.size(); ++chunk) {
-      const Match match = FindMatch(src, pos, search_range);
+      const Match match = match_finder.Find(pos);
       if (match.length > 2) {
         const size_t delta = pos - match.offset - 1;
         if (match.length < 0x12) {
